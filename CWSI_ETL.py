@@ -1,33 +1,26 @@
  
 # # Mark2 daily and hourly data ETL for CWSI Calculation and Save to S3
-# 
 
- 
+
 # %conda install psycopg2
 # %conda install -c anaconda boto3
 # %conda install -y -c anaconda sqlalchemy
 
- 
-# import boto3
+
 import json
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
+import boto3
+import psycopg2
 from datetime import timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from src.utils import df_from_s3, df_to_s3
 
 
- 
+
 # ## Connect to Database
 def get_user_db_creds(user: str, environment: str):
-    """
-    Fetch individual user db credentials from AWS Secretes Manager
-    :param user: username that corresponds to secret name of the format "{user}_db_creds"
-    :param environment: environment for which to fetch db credentials: "alp", "als", or "alt"
-    :return db_info: dictionary that includes  user, password, host, port and db name
-    """
-
     client = boto3.client("secretsmanager")
     response = client.get_secret_value(SecretId=f"{user}_db_creds_1")
     secret_db_creds = json.loads(response["SecretString"])
@@ -44,12 +37,12 @@ def get_user_db_creds(user: str, environment: str):
 def connect_db(dsn: str) -> str:
     cnx = create_engine(dsn)
     return cnx
-
  
 # * CWSI ETL Pipeline
 
  
 def read_daily(cnx, device, column_daily, column_hourly, begin, end):
+    
     schema_raw = 'daily'
     query_template_raw = """    
 --may want to change me here
@@ -88,33 +81,18 @@ pg_conn = connect_db(sqlalchemy_dsn)
 pg_conn
 
  
-# ### 1. Read a single device 
+# Define start and end dates and device IDs
+start_date = '2021-05-04'
+end_date = '2021-09-25'
+devices = ['C006727', 'C006743']
+column_daily = 'device, time, precip, vpd, ea'
+column_hourly = "DATE_TRUNC('day', time) as time_day, device, avg(swdw) as swdw_daily, avg(tbelow) as tbelow_daily, avg(tair) as tair_daily"
 
- 
-# --may want to change me here
-device='C006727'
-start='2021-05-04'
-end='2021-09-25'
-colum_daily = 'device, time, precip, vpd, ea'
-column_hourly = "DATE_TRUNC('day', time) as time_day, device,  avg(swdw) as swdw_daily, avg(tbelow) as tbelow_daily , avg(tair) as tair_daily"
-
-df_ET75 = read_daily(pg_conn, device, colum_daily, column_hourly, start, end)
-
- 
-# --may want to change me here
-device='C006743'
-df_ET100 = read_daily(pg_conn, device, colum_daily, column_hourly, start, end)
-
- 
-df_ET100['time']=pd.to_datetime(df_ET100['time'])
-df_ET75['time']=pd.to_datetime(df_ET75['time'])
-
-
-# df_ET100.select_dtypes(include=['float64']).plot(subplots=True, layout=(3,2),figsize=(80,20), ax=ax)
-df_ET75.select_dtypes(include=['float64']).plot(subplots=True, layout=(3,2),figsize=(80,20), ax=ax)
-# df_ET75
-
- 
-df_ET100.to_parquet('s3://arable-adse-dev/Carbon Project/Stress Index/UCD_Almond/ET100_mark_df_daily.parquet', index=False)
-df_ET75.to_parquet('s3://arable-adse-dev/Carbon Project/Stress Index/UCD_Almond/ET75_mark_df_daily.parquet', index=False)
+# Read data for each device and save to S3
+for device in devices:
+    df = read_daily(pg_conn, device, column_daily, column_hourly, start_date, end_date)
+    df['time'] = pd.to_datetime(df['time'])
+    bucket_name = 'arable-adse-dev'
+    path = f'Carbon Project/Stress Index/UCD_Almond/ET{device}_mark_df_daily.csv'
+    df_to_s3( df, path, bucket_name, format ='csv')
 
