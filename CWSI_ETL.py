@@ -41,30 +41,17 @@ def connect_db(dsn: str) -> str:
 # * CWSI ETL Pipeline
 
  
-def read_daily(cnx, device, column_daily, column_hourly, begin, end):
+def read_daily(cnx, device, column_hourly, begin, end):
     
     schema_raw = 'daily'
     query_template_raw = """    
 --may want to change me here
-with daily as(
-select {column_daily} --, swdw, et, etc, kc, ea, ndvi,
-from device_data_alp.daily 
-where device = '{device}' and time >= '{start}' and time < '{end}'
-),
-tbelow_daily as(
 select {column_hourly}
-from device_data_alp.calibrated as r
+from device_data_alp.hourly as r
 where r.device = '{device}' and time  >= '{start}' and time  < '{end}'
-group by time_day, device
-order by device, time_day
-)
-select d.*, tbelow_daily, tair_daily, swdw_daily
-from tbelow_daily r join daily d
-on d.time =r.time_day and d.device=r.device
-
 """
 
-    sql_query = query_template_raw.format(schema=schema_raw, device=device, column_daily=column_daily, column_hourly=column_hourly, start=begin, end=end)
+    sql_query = query_template_raw.format(schema=schema_raw, device=device, column_hourly=column_hourly, start=begin, end=end)
 
     df = pd.read_sql_query(sql_query, cnx)
 
@@ -92,8 +79,8 @@ devices = ['D003701',
 'D003960', 
 'D003942', 
 'D003943' ]
-column_daily = 'device, time, precip, vpd, ea'
-column_hourly = "DATE_TRUNC('day', time) as time_day, device, avg(swdw) as swdw_daily, avg(tbelow) as tbelow_daily, avg(tair) as tair_daily"
+
+column_hourly = 'time, device, swdw, tbelow, tair, precip, vpd, ea'
 
 # Read data for each device and save to S3
 # res = pd.DataFrame()
@@ -105,11 +92,11 @@ column_hourly = "DATE_TRUNC('day', time) as time_day, device, avg(swdw) as swdw_
 from tqdm import tqdm
 res = pd.DataFrame()
 for device in tqdm(devices):
-    df = read_daily(pg_conn, device, column_daily, column_hourly, start_date, end_date)
+    df = read_daily(pg_conn, device, column_hourly, start_date, end_date)
     df['time'] = pd.to_datetime(df['time'])
     res = pd.concat([res, df])
 
 bucket_name = 'arable-adse-dev'
-path = f'Carbon Project/Stress Index/UCD_Almond/ET_mark_df_daily.csv' #ET{device}_mark_df_daily.csv
+path = f'Carbon Project/Stress Index/UCD_Almond/ET_mark_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( res, path, bucket_name, format ='csv')
 
