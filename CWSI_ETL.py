@@ -82,17 +82,34 @@ pg_conn
 
  
 # Define start and end dates and device IDs
-start_date = '2021-05-04'
-end_date = '2021-09-25'
-devices = ['C006727', 'C006743']
+start_date = '2023-03-25'
+end_date = '2023-05-9'
+devices = ['D003701', 
+'D003705', 
+'D003932', 
+'D003978', 
+'D003898', 
+'D003960', 
+'D003942', 
+'D003943' ]
 column_daily = 'device, time, precip, vpd, ea'
 column_hourly = "DATE_TRUNC('day', time) as time_day, device, avg(swdw) as swdw_daily, avg(tbelow) as tbelow_daily, avg(tair) as tair_daily"
 
 # Read data for each device and save to S3
-for device in devices:
+# res = pd.DataFrame()
+# for device in devices:
+#     df = read_daily(pg_conn, device, column_daily, column_hourly, start_date, end_date)
+#     df['time'] = pd.to_datetime(df['time'])
+#     res = pd.concat([res, df])
+
+from tqdm import tqdm
+res = pd.DataFrame()
+for device in tqdm(devices):
     df = read_daily(pg_conn, device, column_daily, column_hourly, start_date, end_date)
     df['time'] = pd.to_datetime(df['time'])
-    bucket_name = 'arable-adse-dev'
-    path = f'Carbon Project/Stress Index/UCD_Almond/ET{device}_mark_df_daily.csv'
-    df_to_s3( df, path, bucket_name, format ='csv')
+    res = pd.concat([res, df])
+
+bucket_name = 'arable-adse-dev'
+path = f'Carbon Project/Stress Index/UCD_Almond/ET_mark_df_daily.csv' #ET{device}_mark_df_daily.csv
+df_to_s3( res, path, bucket_name, format ='csv')
 
