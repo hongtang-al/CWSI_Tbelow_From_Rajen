@@ -1,4 +1,4 @@
- 
+# %%
 # # Mark2 daily and hourly data ETL for CWSI Calculation and Save to S3
 
 
@@ -94,14 +94,14 @@ for site in tqdm(sites):
 
 
 # define site and stress level/source
-devmap={ 'B076302':['TWE_GB', 'L1'], 
-         'B076523':['TWE_GB', 'L2'], 
-         'B076528':['TWE_GB', 'H1'], 
-         'B076282':['TWE_GB', 'H2'], 
-         'B076526':['TWE_BV2','L1'],
-         'B078407':['TWE_BV2','L2'],
-         'B076276':['TWE_BV2','H1'],
-         'B078419':['TWE_BV2','H2']
+devmap={ 'D003701':['TWE_GB', 'L1'], 
+         'D003705':['TWE_GB', 'L2'], 
+         'D003932':['TWE_GB', 'H1'], 
+         'D003978':['TWE_GB', 'H2'], 
+         'D003898':['TWE_BV2','L1'],
+         'D003960':['TWE_BV2','L2'],
+         'D003942':['TWE_BV2','H1'],
+         'D003943':['TWE_BV2','H2']
       }
 # join meta data with pulled reference data
 df_devmap=pd.DataFrame(devmap).T
@@ -113,3 +113,5 @@ joined_df = df_devmap.merge(res, on=['site_id', 'source'])
 bucket_name = 'arable-adse-dev'
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( joined_df, path, bucket_name, format ='csv')
+
+# %%
