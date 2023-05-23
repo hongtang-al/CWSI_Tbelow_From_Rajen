@@ -1,2 +1,6 @@
 .ipynb_checkpoints/
-
+src/__pycache__/
+__pycache__/
+archive/
+data/
+TWE_GB.py
