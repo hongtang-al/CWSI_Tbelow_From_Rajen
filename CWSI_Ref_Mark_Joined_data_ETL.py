@@ -36,32 +36,71 @@ def connect_db(dsn: str) -> str:
     cnx = create_engine(dsn)
     return cnx
  
-# * CWSI ETL Pipeline
-def read_ref_hourly(cnx, site, source, begin, end):
+# * CWSI ETL Pipeline Integrated reference data and Mark3 data
+def read_ref_hourly(cnx, begin, end):
     
     schema_raw = 'hourly'
     query_template_raw = """    
 --may want to change me here
 
+-- 1. create meta data table
+WITH devmap AS (
+  SELECT *
+  FROM (VALUES
+('D003701', 'TWE_GB', 'L1'),
+('D003705', 'TWE_GB', 'L2'),
+('D003932', 'TWE_GB', 'H1'),
+('D003978', 'TWE_GB', 'H2'),
+('D003898', 'TWE_BV2', 'L1'),
+('D003960', 'TWE_BV2', 'L2'),
+('D003942', 'TWE_BV2', 'H1'),
+('D003943', 'TWE_BV2', 'H2')
+) AS t(device, site_id, source)
+), 
+-- 2. read reference data for trial sites
+cte as (
 select
  	   DATE_TRUNC('hour', ref_time) as ref_time, 
        site_id,
        source,
        avg(ref_tbelow) as ref_tbelow,
-        avg(ref_tsensor) as body_temp
+       avg(ref_tsensor) as body_temp
 
 FROM   device_data.calval_ref_data
-WHERE  site_id = '{site}' --'TWE_GB'
-and source= '{source}'
-and ref_time  >= '{start}' and ref_time  < '{end}'
-
+where site_id in ('TWE_GB', 'TWE_BV2')
+and ref_time>'{start}' and ref_time  < '{end}'
 group by ref_time, site_id, source
-ORDER  BY site_id, source, ref_time  asc
+ORDER  BY site_id, source, ref_time  
+),
+-- 3. join meta data table with reference table
+cte1 as (
+SELECT c.*, d.device FROM devmap d
+join cte c
+using (site_id, source)
+)
+--4. join mark and reference/meta table
+SELECT time, tair, tbelow, vpd, ea, precip, c.* 
+from device_data_alp.hourly d
+join cte1 c
+on c.device=d.device and c.ref_time =d.time
+--
+where 
+
+d.device  in (
+'D003701', 
+'D003705', 
+'D003932', 
+'D003978', 
+'D003898', 
+'D003960', 
+'D003942', 
+'D003943' )
+order by time
 
 """
 
     sql_query = query_template_raw.format(schema=schema_raw, \
-                                         site=site, source=source, start=begin, end=end)
+                                         start=begin, end=end)
 
     df = pd.read_sql_query(sql_query, cnx)
 
@@ -78,36 +117,12 @@ pg_conn = connect_db(sqlalchemy_dsn)
 pg_conn
 
  
-# Define start and end dates and device IDs
+# Define start and end dates
 start_date = '2023-03-25'
 end_date = '2023-05-9'
-sites = ['TWE_GB', 'TWE_BV2']
-sources = ['L1', 'L2', 'H1', 'H2']
 
-from tqdm import tqdm
-res = pd.DataFrame()
-for site in tqdm(sites):
-    for source in tqdm(sources):
-        df = read_ref_hourly(pg_conn, site, source, start_date, end_date)
-        df['ref_time'] = pd.to_datetime(df['ref_time'])
-        res = pd.concat([res, df])
-
-
-# define site and stress level/source
-devmap={ 'D003701':['TWE_GB', 'L1'], 
-         'D003705':['TWE_GB', 'L2'], 
-         'D003932':['TWE_GB', 'H1'], 
-         'D003978':['TWE_GB', 'H2'], 
-         'D003898':['TWE_BV2','L1'],
-         'D003960':['TWE_BV2','L2'],
-         'D003942':['TWE_BV2','H1'],
-         'D003943':['TWE_BV2','H2']
-      }
-# join meta data with pulled reference data
-df_devmap=pd.DataFrame(devmap).T
-df_devmap.reset_index(inplace=True)
-df_devmap.columns=[ 'device', 'site_id', 'source']
-joined_df = df_devmap.merge(res, on=['site_id', 'source'])
+joined_df = read_ref_hourly(pg_conn, start_date, end_date)
+joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
 
 # uploaded reference data to S3
 bucket_name = 'arable-adse-dev'
