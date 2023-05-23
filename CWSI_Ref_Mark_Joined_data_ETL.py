@@ -119,7 +119,7 @@ pg_conn
  
 # Define start and end dates
 start_date = '2023-03-25'
-end_date = '2023-05-9'
+end_date = '2023-05-23'
 
 joined_df = read_ref_hourly(pg_conn, start_date, end_date)
 joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
