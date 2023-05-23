@@ -87,7 +87,7 @@ def esat_(xT):  # pragma: no cover
     :return:
     """
     return (617.4 + 42.22 * xT + 1.675 * xT ** 2 + 0.01408 * xT ** 3 +
-            0.0005818 * xT ** 4) 
+            0.0005818 * xT ** 4)/1000
 
 def upper_limit(df):
     cp = 1013 # heat capacity of air
