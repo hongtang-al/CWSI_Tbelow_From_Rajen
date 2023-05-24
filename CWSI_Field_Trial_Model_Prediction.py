@@ -34,28 +34,7 @@ def process_ET(df):
     df_p1 = df_p.groupby('local_time').mean().reset_index()
     return df_p1
 
-
-# Convert half-hourly DataFrame to hourly DataFrame by rounding to day and taking the average for each day
-def halfhour2hourly(df):
-    df['local_time'] = pd.to_datetime(df['local_time'].dt.date)
-    agg_func = {
-        'tair': 'mean',
-        'tbelow': 'mean',
-        'CanopyTemp': 'mean',
-        'ref_tbelow': 'mean',
-        'ndvi': 'mean',
-        'evi': 'mean',
-        'Sapflow(mm/day)': 'mean',
-        'Dt': 'mean',
-        'Dr': 'mean',
-        'Gt': 'mean',
-        'Gc': 'mean'
-    }
-    df['local_time'] = df['local_time'].dt.floor(freq='D')
-    df_daily = df.groupby('local_time').agg(agg_func).reset_index()
-    return df_daily
-
-
+# %%
 # Perform preprocessing steps on DataFrame, including calculating various columns based on existing columns
 def preprocessing(df, a, b):
     df['LL'] = a + b * df['vpd']  # Define lower limit
@@ -66,47 +45,44 @@ def preprocessing(df, a, b):
     df['CWSI'] = (abs(df['diff'] - df['LL']) / (df['UL_mod'] - df['LL']))
     return df
 
+def create_features(field_df):
+# Calculate the 'tbelow-tair' column by subtracting 'tair' from 'tbelow'
+    field_df['ref_tbelow-tair'] = field_df['ref_tbelow'] - field_df['tair']
+    field_df['es'] = esat_(field_df['tair'])
+    return field_df
 # %%
+#dataframe is pulled using SQL query directly using: CWSI_Ref_Mark_Joined_data_ETL.py
 bucket_name = 'arable-adse-dev'
-path = 'Carbon Project/Stress Index/UCD_Almond/ET_mark_df_hourly.csv'
+path = 'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv'
 
 # Load DataFrame from S3 bucket
-field_df = df_from_s3(path, bucket_name, format='csv')
-
+joined_df = df_from_s3(path, bucket_name, format='csv')
 # %%
-GB_devices=['D003701', 'D003705', 'D003932', 'D003978']
-BV_devices=['D003898', 'D003960','D003942', 'D003943']
-
-HighStress =['D003942', 'D003943', 'D003932', 'D003978']
-LowStress =['D003701', 'D003705','D003898', 'D003960',]
-
-# Calculate the 'tbelow-tair' column by subtracting 'tair' from 'tbelow'
-field_df['tbelow-tair'] = field_df['tbelow'] - field_df['tair']
-field_df['es'] = esat_(field_df['tair'])
-# Assign site based on the 'device' column
-field_df['site'] = np.where(field_df.device.isin(GB_devices), 'GB', 'BV')
-# Assign StressLevel based on the 'device' column
-field_df['StressLevel'] = np.where(field_df.device.isin(HighStress), 'HS', 'LS')
-
+# change columns names to use following processing program
+field_df=joined_df.drop(['ref_time', 'body_temp'], axis=1)
+# Create the 'tbelow-tair' and es
+create_features(field_df)
 # Drop rows with missing values
 field_df.dropna(inplace=True)
 # %%
 res_df = pd.DataFrame()
-sites = field_df.site.unique().tolist()
-
+sites = field_df.site_id.unique().tolist()
+# %%
 for site in sites:
-    x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[field_df['site'] == site][['vpd', 'tbelow-tair']])
-    _ = preprocessing(field_df[field_df['site'] == site], m1_coef_[0][0], m1_intercept_[0])
+    x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[field_df['site_id'] == site][['vpd', 'ref_tbelow-tair']])
+    _ = preprocessing(field_df[field_df['site_id'] == site], m1_coef_[0][0], m1_intercept_[0])
     res_df = pd.concat([res_df, _])
 
 res_df = res_df.drop(['diff'], axis=1)
-
+res_df 
+# %%
 bucket_name = 'arable-adse-dev'
 path = 'Carbon Project/Stress Index/UCD_Almond/field_cwsi_trial.csv'
 # Save res_df to S3 bucket
 df_to_s3(res_df, path, bucket_name, format='csv')
 
-
 # %%
 res_df
+# %%
+res_df.to_csv('./data/cwsi_joined.csv')
 # %%
