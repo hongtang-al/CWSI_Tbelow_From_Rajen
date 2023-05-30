@@ -2,9 +2,9 @@
 # %%
 import sys
 import pandas as pd
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 from sklearn.linear_model import LinearRegression
-import seaborn as sns
+# import seaborn as sns
 import boto3
 from botocore.session import Session
 import pandas.io.sql as psql
