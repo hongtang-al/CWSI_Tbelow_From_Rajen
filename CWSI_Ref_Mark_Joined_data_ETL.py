@@ -9,7 +9,7 @@
 import json
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import boto3
 import psycopg2
 from datetime import timedelta
@@ -79,7 +79,7 @@ join cte c
 using (site_id, source)
 )
 --4. join mark and reference/meta table
-SELECT time, tair, tbelow, vpd, ea, precip, c.* 
+SELECT time, tair, tbelow, vpd, ea, precip, lat, long, c.* 
 from device_data_alp.hourly d
 join cte1 c
 on c.device=d.device and c.ref_time =d.time
@@ -119,7 +119,7 @@ pg_conn
  
 # Define start and end dates
 start_date = '2023-03-25'
-end_date = '2023-05-23'
+end_date = '2023-05-30'
 
 joined_df = read_ref_hourly(pg_conn, start_date, end_date)
 joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])

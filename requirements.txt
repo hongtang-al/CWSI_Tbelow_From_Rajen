@@ -9,7 +9,6 @@ ipython==8.4.0
 jedi==0.18.2
 jmespath==1.0.1
 joblib==1.2.0
-matplotlib-inline==0.1.6
 numpy==1.24.3
 pandas==2.0.1
 parso==0.8.3
