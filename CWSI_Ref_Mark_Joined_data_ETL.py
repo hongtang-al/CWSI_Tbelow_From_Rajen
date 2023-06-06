@@ -79,13 +79,14 @@ join cte c
 using (site_id, source)
 )
 --4. join mark and reference/meta table
+,
+joined as (
 SELECT time, tair, tbelow, vpd, ea, precip, lat, long, c.* 
 from device_data_alp.hourly d
 join cte1 c
 on c.device=d.device and c.ref_time =d.time
 --
 where 
-
 d.device  in (
 'D003701', 
 'D003705', 
@@ -96,8 +97,56 @@ d.device  in (
 'D003942', 
 'D003943' )
 order by time
+)
+-- 5 join soil data
+SELECT  j.*,  moisture_0_mean,  moisture_8_mean,salinity_0_mean,  temp_0_mean
+FROM device_data_alp.sentek_hourly s
+join joined j
+on j.device=s.device and j.time=s.time
 
 """
+
+    sql_query = query_template_raw.format(schema=schema_raw, \
+                                         start=begin, end=end)
+
+    df = pd.read_sql_query(sql_query, cnx)
+
+    return df
+
+# %%
+def read_ref_additional(cnx, begin, end, devices):
+    schema_raw = 'hourly'
+    query_template_raw = """
+--may want to change me here
+
+SELECT date_trunc('hour', d.time) AS time, d.device, avg(d.swdw) AS average_swdw
+FROM device_data_alp.calibrated d 
+WHERE device IN ({devices})
+AND d.time > '{start}' AND d.time < '{end}'
+GROUP BY time, d.device
+ORDER BY time;
+""".format(devices=devices, start=begin, end=end)
+
+    sql_query = query_template_raw.format(schema=schema_raw, \
+                                         start=begin, end=end)
+
+    df = pd.read_sql_query(sql_query, cnx)
+
+    return df
+
+# %%
+def read_temp3(cnx, begin, end, devices):
+    schema_raw = 'hourly'
+    query_template_raw = """
+--may want to change me here
+
+SELECT date_trunc('hour', r.time) AS time, r.device, avg(r.lw_temp_3) AS average_temp_3
+FROM device_data_alp.raw r 
+WHERE device IN ({devices})
+AND r.time > '{start}' AND r.time < '{end}'
+GROUP BY time, r.device
+ORDER BY time;
+""".format(devices=devices, start=begin, end=end)
 
     sql_query = query_template_raw.format(schema=schema_raw, \
                                          start=begin, end=end)
@@ -120,13 +169,45 @@ pg_conn
 # Define start and end dates
 start_date = '2023-03-25'
 end_date = '2023-05-30'
+bucket_name = 'arable-adse-dev'
 
 joined_df = read_ref_hourly(pg_conn, start_date, end_date)
 joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
+# %%
+joined_df 
 
+path = f'Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv' #ET{device}_mark_df_daily.csv
+df_to_s3( joined_df, path, bucket_name, format ='csv')
+# %%
+
+devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960', 'D003942', 'D003943'"
+additional_df = read_ref_additional(pg_conn, start_date, end_date, devices_list)
+additional_df['time'] = pd.to_datetime(joined_df['time'])
+# %%
+additional_df
+# %%
+# uploaded reference data to S3
+path = f'Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv' #ET{device}_mark_df_daily.csv
+df_to_s3( additional_df, path, bucket_name, format ='csv')
+# %%
+temp3_df = read_temp3(pg_conn, start_date, end_date, devices_list)
+temp3_df['time'] = pd.to_datetime(joined_df['time'])
+# %%
+temp3_df
+path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' #ET{device}_mark_df_daily.csv
+df_to_s3( temp3_df, path, bucket_name, format ='csv')
+
+# %%
+#join three dataframes
+joined_df.merge(additional_df, on=['time', 'device'])
+joined_df.merge(temp3_df, on=['time', 'device'])
+joined_df
+# %%
 # uploaded reference data to S3
 bucket_name = 'arable-adse-dev'
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( joined_df, path, bucket_name, format ='csv')
 
+# %%
+joined_df
 # %%
