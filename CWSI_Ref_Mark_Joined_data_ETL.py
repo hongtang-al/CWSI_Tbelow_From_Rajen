@@ -57,6 +57,7 @@ WITH devmap AS (
 ('D003943', 'TWE_BV2', 'H2')
 ) AS t(device, site_id, source)
 ), 
+
 -- 2. read reference data for trial sites
 cte as (
 select
@@ -68,18 +69,19 @@ select
 
 FROM   device_data.calval_ref_data
 where site_id in ('TWE_GB', 'TWE_BV2')
-and ref_time>'{start}' and ref_time  < '{end}'
-group by ref_time, site_id, source
-ORDER  BY site_id, source, ref_time  
+and DATE_TRUNC('hour', ref_time)>'{start}' and DATE_TRUNC('hour', ref_time)  < '{end}'
+group by DATE_TRUNC('hour', ref_time), site_id, source
+ORDER  BY site_id, source, DATE_TRUNC('hour', ref_time)
 ),
+
 -- 3. join meta data table with reference table
 cte1 as (
 SELECT c.*, d.device FROM devmap d
 join cte c
 using (site_id, source)
 )
---4. join mark and reference/meta table
 ,
+--4. join mark and reference/meta table
 joined as (
 SELECT time, tair, tbelow, vpd, ea, precip, lat, long, c.* 
 from device_data_alp.hourly d
@@ -122,9 +124,9 @@ def read_ref_additional(cnx, begin, end, devices):
 SELECT date_trunc('hour', d.time) AS time, d.device, avg(d.swdw) AS average_swdw
 FROM device_data_alp.calibrated d 
 WHERE device IN ({devices})
-AND d.time > '{start}' AND d.time < '{end}'
-GROUP BY time, d.device
-ORDER BY time;
+AND date_trunc('hour', d.time) > '{start}' AND date_trunc('hour', d.time) < '{end}'
+GROUP BY date_trunc('hour', d.time), d.device
+ORDER BY date_trunc('hour', d.time);
 """.format(devices=devices, start=begin, end=end)
 
     sql_query = query_template_raw.format(schema=schema_raw, \
@@ -143,9 +145,9 @@ def read_temp3(cnx, begin, end, devices):
 SELECT date_trunc('hour', r.time) AS time, r.device, avg(r.lw_temp_3) AS average_temp_3
 FROM device_data_alp.raw r 
 WHERE device IN ({devices})
-AND r.time > '{start}' AND r.time < '{end}'
-GROUP BY time, r.device
-ORDER BY time;
+AND date_trunc('hour', r.time) > '{start}' AND date_trunc('hour', r.time) < '{end}'
+GROUP BY date_trunc('hour', r.time), r.device
+ORDER BY date_trunc('hour', r.time);
 """.format(devices=devices, start=begin, end=end)
 
     sql_query = query_template_raw.format(schema=schema_raw, \
@@ -170,44 +172,59 @@ pg_conn
 start_date = '2023-03-25'
 end_date = '2023-05-30'
 bucket_name = 'arable-adse-dev'
-
+# %%
+%%time
 joined_df = read_ref_hourly(pg_conn, start_date, end_date)
 joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
-# %%
-joined_df 
 
+# %%
+joined_df['time'] = pd.to_datetime(joined_df['time'])
+joined_df.sort_values(['device', 'time'])
+# %%
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( joined_df, path, bucket_name, format ='csv')
 # %%
 
 devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960', 'D003942', 'D003943'"
-additional_df = read_ref_additional(pg_conn, start_date, end_date, devices_list)
-additional_df['time'] = pd.to_datetime(joined_df['time'])
+swdw_df = read_ref_additional(pg_conn, start_date, end_date, devices_list)
+swdw_df['time'] = pd.to_datetime(joined_df['time'])
+
 # %%
-additional_df
-# %%
+%%time
 # uploaded reference data to S3
 path = f'Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv' #ET{device}_mark_df_daily.csv
-df_to_s3( additional_df, path, bucket_name, format ='csv')
+df_to_s3( swdw_df, path, bucket_name, format ='csv')
 # %%
+%%time
 temp3_df = read_temp3(pg_conn, start_date, end_date, devices_list)
 temp3_df['time'] = pd.to_datetime(joined_df['time'])
+
 # %%
-temp3_df
 path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( temp3_df, path, bucket_name, format ='csv')
 
 # %%
-#join three dataframes
-joined_df.merge(additional_df, on=['time', 'device'])
-joined_df.merge(temp3_df, on=['time', 'device'])
-joined_df
+temp3_df.shape, swdw_df.shape, joined_df.shape
+# temp3_df.device.unique(), swdw_df.device.unique(), joined_df.device.unique()
+# %%
+#remove NaT from dataframe
+temp3_df['time']=temp3_df['time'].replace('NaT', '-999')
+temp3_df
+swdw_df = swdw_df[swdw_df['time'].notnull()]
+swdw_df
+
+# %%
+temp3_df['device'] = temp3_df['device'].astype('category')
+temp3_df.info()
+swdw_df['device'] = swdw_df['device'].astype('category')
+swdw_df.info()
+# %%
+merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=['time', 'device'])
+
 # %%
 # uploaded reference data to S3
 bucket_name = 'arable-adse-dev'
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv' #ET{device}_mark_df_daily.csv
-df_to_s3( joined_df, path, bucket_name, format ='csv')
+df_to_s3( merged_df, path, bucket_name, format ='csv')
 
-# %%
-joined_df
 # %%
