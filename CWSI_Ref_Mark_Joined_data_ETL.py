@@ -1,6 +1,7 @@
 # %%
 # # Mark2 daily and hourly data ETL for CWSI Calculation and Save to S3
-
+# file load joined_df, lw_temp_3 and swdw into a dataframe used for CWSI calculation 
+# and shared on quicksight and pwoerbi dashboard
 
 # %conda install psycopg2
 # %conda install -c anaconda boto3
@@ -9,12 +10,14 @@
 import json
 import pandas as pd
 import numpy as np
-# import matplotlib.pyplot as plt
 import boto3
 import psycopg2
 from datetime import timedelta
 from sqlalchemy import create_engine, text
 from src.utils import df_from_s3, df_to_s3
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 # ## Connect to Database
@@ -58,7 +61,6 @@ WITH devmap AS (
 ) AS t(device, site_id, source)
 ), 
 
--- 2. read reference data for trial sites
 cte as (
 select
  	   DATE_TRUNC('hour', ref_time) as ref_time, 
@@ -121,12 +123,12 @@ def read_ref_additional(cnx, begin, end, devices):
     query_template_raw = """
 --may want to change me here
 
-SELECT date_trunc('hour', d.time) AS time, d.device, avg(d.swdw) AS average_swdw
-FROM device_data_alp.calibrated d 
+SELECT date_trunc('hour', time) AS time, device, avg(swdw) AS swdw
+FROM device_data_alp.calibrated 
 WHERE device IN ({devices})
-AND date_trunc('hour', d.time) > '{start}' AND date_trunc('hour', d.time) < '{end}'
-GROUP BY date_trunc('hour', d.time), d.device
-ORDER BY date_trunc('hour', d.time);
+AND time > '{start}' AND time < '{end}'
+GROUP BY date_trunc('hour', time), device
+ORDER BY device, time;
 """.format(devices=devices, start=begin, end=end)
 
     sql_query = query_template_raw.format(schema=schema_raw, \
@@ -142,12 +144,12 @@ def read_temp3(cnx, begin, end, devices):
     query_template_raw = """
 --may want to change me here
 
-SELECT date_trunc('hour', r.time) AS time, r.device, avg(r.lw_temp_3) AS average_temp_3
+SELECT date_trunc('hour', r.time) AS time, r.device, avg(r.lw_temp_3) AS lw_temp_3
 FROM device_data_alp.raw r 
-WHERE device IN ({devices})
-AND date_trunc('hour', r.time) > '{start}' AND date_trunc('hour', r.time) < '{end}'
+WHERE device IN ({devices}) 
+AND time > '{start}' AND time < '{end}'
 GROUP BY date_trunc('hour', r.time), r.device
-ORDER BY date_trunc('hour', r.time);
+ORDER BY r.device, time;
 """.format(devices=devices, start=begin, end=end)
 
     sql_query = query_template_raw.format(schema=schema_raw, \
@@ -156,7 +158,6 @@ ORDER BY date_trunc('hour', r.time);
     df = pd.read_sql_query(sql_query, cnx)
 
     return df
-
 # %%
 # retrieve personal tocken from arable secrete Manager
 # --may want to change me here
@@ -170,7 +171,7 @@ pg_conn
  
 # Define start and end dates
 start_date = '2023-03-25'
-end_date = '2023-05-30'
+end_date = '2023-06-5'
 bucket_name = 'arable-adse-dev'
 # %%
 %%time
@@ -181,24 +182,37 @@ joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
 joined_df['time'] = pd.to_datetime(joined_df['time'])
 joined_df.sort_values(['device', 'time'])
 # %%
+# joined_df.sort_values(['device', 'time']).tail(30)
+# %%
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( joined_df, path, bucket_name, format ='csv')
 # %%
-
+%%time
 devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960', 'D003942', 'D003943'"
 swdw_df = read_ref_additional(pg_conn, start_date, end_date, devices_list)
-swdw_df['time'] = pd.to_datetime(joined_df['time'])
-
+# %%
+swdw_df['time'] = pd.to_datetime(swdw_df['time'])
+# %%
+swdw_df = swdw_df[swdw_df['time'].notnull()]
+swdw_df['device'] = swdw_df['device'].astype('category')
+swdw_cleaned_df = swdw_df.groupby(['time', 'device']).agg({'swdw': 'mean'}).reset_index()
+swdw_cleaned_df = swdw_cleaned_df.dropna(subset=['swdw'])
+# swdw_cleaned_df.sort_values(['device', 'time']).head(30)
 # %%
 %%time
 # uploaded reference data to S3
 path = f'Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv' #ET{device}_mark_df_daily.csv
-df_to_s3( swdw_df, path, bucket_name, format ='csv')
+df_to_s3( swdw_cleaned_df, path, bucket_name, format ='csv')
 # %%
 %%time
-temp3_df = read_temp3(pg_conn, start_date, end_date, devices_list)
-temp3_df['time'] = pd.to_datetime(joined_df['time'])
 
+temp3_df = read_temp3(pg_conn, start_date, end_date, devices_list)
+temp3_df['time'] = pd.to_datetime(temp3_df['time'])
+# %%
+#remove NaT from dataframe
+temp3_df['time']=temp3_df['time'].replace('NaT', '-999')
+temp3_df['device'] = temp3_df['device'].astype('category')
+temp3_df.sort_values(['device', 'time']).head(30)
 # %%
 path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( temp3_df, path, bucket_name, format ='csv')
@@ -206,18 +220,7 @@ df_to_s3( temp3_df, path, bucket_name, format ='csv')
 # %%
 temp3_df.shape, swdw_df.shape, joined_df.shape
 # temp3_df.device.unique(), swdw_df.device.unique(), joined_df.device.unique()
-# %%
-#remove NaT from dataframe
-temp3_df['time']=temp3_df['time'].replace('NaT', '-999')
-temp3_df
-swdw_df = swdw_df[swdw_df['time'].notnull()]
-swdw_df
 
-# %%
-temp3_df['device'] = temp3_df['device'].astype('category')
-temp3_df.info()
-swdw_df['device'] = swdw_df['device'].astype('category')
-swdw_df.info()
 # %%
 merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=['time', 'device'])
 
@@ -226,5 +229,65 @@ merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=[
 bucket_name = 'arable-adse-dev'
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( merged_df, path, bucket_name, format ='csv')
+# %%
+# merged_df.loc[merged_df.device=='D003978'].sort_values('time')
+# %%
+## quickplot of merged data
+
+def quicklook_df(merged_df):
+    # Sort the merged_df DataFrame by 'time' in ascending order
+    merged_df_sorted = merged_df.sort_values('time')
+
+    # Get unique device values
+    unique_devices = merged_df_sorted['device'].unique()
+
+    # Create subplots with shared x-axis
+    fig = make_subplots(rows=len(unique_devices), cols=1, shared_xaxes=True)
+
+    # Iterate over unique devices
+    for i, device in enumerate(unique_devices, start=1):
+        filtered_df = merged_df_sorted[merged_df_sorted['device'] == device]
+
+        # Add trace for each device with mode='lines+markers'
+        fig.add_trace(
+            go.Scatter(x=filtered_df['time'], y=filtered_df['lw_temp_3'], mode='lines+markers', name=f'Average Temp 3'),
+            row=i, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=filtered_df['time'], y=filtered_df['ref_tbelow'], mode='lines+markers', name=f'Ref Tbelow'),
+            row=i, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=filtered_df['time'], y=filtered_df['tbelow'], mode='lines+markers', name=f'Tbelow'),
+            row=i, col=1
+        )
+
+        # Set y-axis label for each subplot
+        fig.update_yaxes(title_text='Value', row=i, col=1)
+
+        # Set title for each subplot with device name
+        # fig.update_layout(title_text=f"Device: {device}", row=i, col=1)
+
+    # Set x-axis label for the last subplot
+    fig.update_xaxes(title_text='Time', row=len(unique_devices), col=1)
+
+    # for i, device in enumerate(unique_devices, start=1):
+    #     fig.update_layout(title=f"Device: {device}", row=i, col=1)
+
+    # Move the legend to the bottom
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                    height=400, width=1000)
+
+    # Set the figure size
+    fig.update_layout(width=1000, height=80 * len(unique_devices))
+
+    # Show the figure
+    fig.show()
+# quick check data quality, time alignment, outlier etc.
+quicklook_df(merged_df)
+
+
+
+
 
 # %%
