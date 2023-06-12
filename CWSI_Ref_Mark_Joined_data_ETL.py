@@ -159,6 +159,46 @@ ORDER BY r.device, time;
 
     return df
 # %%
+def read_ref_additional(cnx, begin, end, devices):
+    schema_raw = 'hourly'
+    query_template_raw = """
+--may want to change me here
+
+SELECT date_trunc('hour', time) AS time, device, avg(swdw) AS swdw
+FROM device_data_alp.calibrated 
+WHERE device IN ({devices})
+AND time > '{start}' AND time < '{end}'
+GROUP BY date_trunc('hour', time), device
+ORDER BY device, time;
+""".format(devices=devices, start=begin, end=end)
+
+    sql_query = query_template_raw.format(schema=schema_raw, \
+                                         start=begin, end=end)
+
+    df = pd.read_sql_query(sql_query, cnx)
+
+    return df
+
+# %%
+def read_irrigation(cnx, begin, end, devices):
+    schema_raw = 'hourly'
+    query_template_raw = """
+--may want to change me here
+
+SELECT time,device, duration_seconds
+FROM device_data_alp.irrigation_runtime_hourly r 
+WHERE device IN ({devices}) 
+AND time > '{start}' AND time < '{end}'
+ORDER BY r.device, time;
+""".format(devices=devices, start=begin, end=end)
+
+    sql_query = query_template_raw.format(schema=schema_raw, \
+                                         start=begin, end=end)
+
+    df = pd.read_sql_query(sql_query, cnx)
+
+    return df
+# %%
 # retrieve personal tocken from arable secrete Manager
 # --may want to change me here
 dsn=get_user_db_creds('hong_tang', 'adse')
@@ -171,7 +211,7 @@ pg_conn
  
 # Define start and end dates
 start_date = '2023-03-25'
-end_date = '2023-06-5'
+end_date = '2023-06-12'
 bucket_name = 'arable-adse-dev'
 # %%
 %%time
@@ -218,12 +258,45 @@ path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' #ET{devi
 df_to_s3( temp3_df, path, bucket_name, format ='csv')
 
 # %%
-temp3_df.shape, swdw_df.shape, joined_df.shape
+# Irrigation dataframe
+# %%time
+devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960', 'D003942', 'D003943'"
+irg_df = read_irrigation(pg_conn, start_date, end_date, devices_list)
+# %%
+irg_df['time'] = pd.to_datetime(irg_df['time'])
+# %%
+irg_df
+# %%
+irg_df = irg_df[irg_df['time'].notnull()]
+irg_df['device'] = irg_df['device'].astype('category')
+# swdw_cleaned_df.sort_values(['device', 'time']).head(30)
+# %%
+%%time
+# uploaded reference data to S3
+path = f'Carbon Project/Stress Index/UCD_Almond/irg_df_hourly.csv' 
+df_to_s3( irg_df, path, bucket_name, format ='csv')
+# %%
+path='Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv'
+temp3_df=df_from_s3(path,bucket_name)
+path='Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv'
+swdw_df=df_from_s3(path,bucket_name)
+path='Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv'
+joined_df=df_from_s3(path,bucket_name)
+# %%
+temp3_df.shape, swdw_df.shape, joined_df.shape,irg_df.shape
+[temp3_df, swdw_df, joined_df, irg_df] = [df.apply(lambda x: pd.to_datetime(x) if x.name == 'time' else x) for df in [temp3_df, swdw_df, joined_df, irg_df]]
+[temp3_df, swdw_df, joined_df, irg_df] = [df.apply(lambda x: x.astype('category') if x.name == 'device' else x) for df in [temp3_df, swdw_df, joined_df, irg_df]]
+
+
 # temp3_df.device.unique(), swdw_df.device.unique(), joined_df.device.unique()
 
 # %%
 merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=['time', 'device'])
-
+# %%
+merged_df = merged_df.merge(irg_df, on=['time', 'device'], how='left')
+# %%
+merged_df['duration_seconds'] = merged_df['duration_seconds'].fillna(0)
+merged_df['duration_seconds'].value_counts()
 # %%
 # uploaded reference data to S3
 bucket_name = 'arable-adse-dev'

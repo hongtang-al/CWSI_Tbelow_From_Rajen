@@ -49,6 +49,13 @@ def preprocessing(df, a, b):
     df['UL'] = df['tbelow'] + 5  # Upper limit
     df['diff'] = df['tbelow'] - df['tair']
     df['CWSI'] = (abs(df['diff'] - df['LL']) / (df['UL_mod'] - df['LL']))
+
+    window_size = 3 #moving averate of 3 hours
+    #compute pseudo CWSI by computing slopes of diff/vpd
+    df['diff_rolling_avg'] = df['diff'].rolling(window=window_size, min_periods=1).mean()
+    df['vpd_rolling_avg'] = df['vpd'].rolling(window=window_size, min_periods=1).mean()
+    df['pCWSI'] = df.apply(lambda x: x.diff_rolling_avg/x.vpd_rolling_avg, axis=1)
+
     return df
 
 def get_solar_time(longitude, utc_time):
@@ -96,7 +103,7 @@ sites = field_df.site_id.unique().tolist()
 for site in sites:
     #select time window to compute m1_coef_, m1_intercept_
     for source in ['L1','L2', 'H1', 'H2']:
-        solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-05-06') & (field_df.time> '2023-05-06')
+        solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-05-06') & (field_df.time< '2023-05-25')
         # compute slope and interception for solarnoon on each device
         x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[(field_df['site_id'] == site) \
                                                                 & (field_df['source'] == source) \
@@ -107,7 +114,7 @@ for site in sites:
         print(site, source, m1_coef_[0][0], m1_intercept_[0], res_df.shape)
         regline_list.append([site, source, m1_coef_[0][0], m1_intercept_[0]])
 
-res_df = res_df.drop(['diff'], axis=1)
+res_df = res_df.drop(['diff', 'diff_rolling_avg', 'vpd_rolling_avg'], axis=1)
 regline_list
 
 # %%
@@ -115,6 +122,10 @@ bucket_name = 'arable-adse-dev'
 path = 'Carbon Project/Stress Index/UCD_Almond/field_cwsi_trial.csv'
 # Save res_df to S3 bucket
 df_to_s3(res_df, path, bucket_name, format='csv')
+
+# %%
+# res_df
+
 
 # %%
 res_df.to_csv('./data/cwsi_joined.csv')
