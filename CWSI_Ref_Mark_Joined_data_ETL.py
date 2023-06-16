@@ -103,7 +103,7 @@ d.device  in (
 order by time
 )
 -- 5 join soil data
-SELECT  j.*,  moisture_0_mean,  moisture_8_mean,salinity_0_mean,  temp_0_mean
+SELECT  j.*,  moisture_0_mean,  moisture_2_mean,moisture_4_mean,moisture_6_mean, moisture_8_mean, salinity_0_mean,  temp_0_mean
 FROM device_data_alp.sentek_hourly s
 join joined j
 on j.device=s.device and j.time=s.time

@@ -103,7 +103,7 @@ sites = field_df.site_id.unique().tolist()
 for site in sites:
     #select time window to compute m1_coef_, m1_intercept_
     for source in ['L1','L2', 'H1', 'H2']:
-        solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-05-06') & (field_df.time< '2023-05-25')
+        solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-06-01') & (field_df.time< '2023-06-29')
         # compute slope and interception for solarnoon on each device
         x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[(field_df['site_id'] == site) \
                                                                 & (field_df['source'] == source) \
@@ -122,10 +122,6 @@ bucket_name = 'arable-adse-dev'
 path = 'Carbon Project/Stress Index/UCD_Almond/field_cwsi_trial.csv'
 # Save res_df to S3 bucket
 df_to_s3(res_df, path, bucket_name, format='csv')
-
-# %%
-# res_df
-
 
 # %%
 res_df.to_csv('./data/cwsi_joined.csv')
