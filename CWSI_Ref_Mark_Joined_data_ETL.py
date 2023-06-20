@@ -211,7 +211,7 @@ pg_conn
  
 # Define start and end dates
 start_date = '2023-03-25'
-end_date = '2023-06-12'
+end_date = '2023-06-20'
 bucket_name = 'arable-adse-dev'
 # %%
 %%time
