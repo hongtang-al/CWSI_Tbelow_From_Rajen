@@ -264,8 +264,7 @@ devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960'
 irg_df = read_irrigation(pg_conn, start_date, end_date, devices_list)
 # %%
 irg_df['time'] = pd.to_datetime(irg_df['time'])
-# %%
-irg_df
+
 # %%
 irg_df = irg_df[irg_df['time'].notnull()]
 irg_df['device'] = irg_df['device'].astype('category')
@@ -296,7 +295,7 @@ merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=[
 merged_df = merged_df.merge(irg_df, on=['time', 'device'], how='left')
 # %%
 merged_df['duration_seconds'] = merged_df['duration_seconds'].fillna(0)
-merged_df['duration_seconds'].value_counts()
+
 # %%
 # uploaded reference data to S3
 bucket_name = 'arable-adse-dev'
