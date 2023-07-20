@@ -246,16 +246,18 @@ end_date = datetime.today().strftime('%Y-%m-%d')  # Get today's date
 bucket_name = 'arable-adse-dev'
 
 # %%
+# read hourly Mark and reference device
 joined_df = read_ref_hourly(pg_conn, start_date, end_date)
 joined_df['ref_time'] = pd.to_datetime(joined_df['ref_time'])
 
 joined_df['time'] = pd.to_datetime(joined_df['time'])
 joined_df.sort_values(['device', 'time'])
 
-path = f'Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv' #ET{device}_mark_df_daily.csv
+path = f'Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv' 
 df_to_s3( joined_df, path, bucket_name, format ='csv')
 
 # %%
+# read swdw remove rows missing swdw
 devices_list = "'D003701', 'D003705', 'D003932', 'D003978', 'D003898', 'D003960', 'D003942', 'D003943'"
 swdw_df = read_ref_additional(pg_conn, start_date, end_date, devices_list)
 swdw_df['time'] = pd.to_datetime(swdw_df['time'])
@@ -266,7 +268,8 @@ swdw_cleaned_df = swdw_df.groupby(['time', 'device']).agg({'swdw': 'mean'}).rese
 swdw_cleaned_df = swdw_cleaned_df.dropna(subset=['swdw'])
 
 # %%
-path = f'Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv' #ET{device}_mark_df_daily.csv
+# read df with lw_temp_3 and clean empty N/A rows
+path = f'Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv'
 df_to_s3( swdw_cleaned_df, path, bucket_name, format ='csv')
 
 temp3_df = read_temp3(pg_conn, start_date, end_date, devices_list)
@@ -274,44 +277,57 @@ temp3_df['time'] = pd.to_datetime(temp3_df['time'])
 
 temp3_df['time']=temp3_df['time'].replace('NaT', '-999')
 temp3_df['device'] = temp3_df['device'].astype('category')
-# temp3_df.sort_values(['device', 'time']).head(30)
 
 # %%
-path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' #ET{device}_mark_df_daily.csv
+path = f'Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv' 
 df_to_s3( temp3_df, path, bucket_name, format ='csv')
 
-# %%
+
+# read df with irrigation data 
 irg_df = read_irrigation(pg_conn, start_date, end_date, devices_list)
 irg_df['time'] = pd.to_datetime(irg_df['time'])
 irg_df = irg_df[irg_df['time'].notnull()]
 irg_df['device'] = irg_df['device'].astype('category')
+# %%
+path = f'Carbon Project/Stress Index/UCD_Almond/irg_df_hourly.csv' 
+df_to_s3( irg_df, path, bucket_name, format ='csv')
+
+# %%
+# read individual dataframes before joins
 path='Carbon Project/Stress Index/UCD_Almond/lw_temp3_df_hourly.csv'
 temp3_df=df_from_s3(path,bucket_name)
 path='Carbon Project/Stress Index/UCD_Almond/swdw_df_hourly.csv'
 swdw_df=df_from_s3(path,bucket_name)
 path='Carbon Project/Stress Index/UCD_Almond/Joined_df_hourly.csv'
 joined_df=df_from_s3(path,bucket_name)
+path = f'Carbon Project/Stress Index/UCD_Almond/irg_df_hourly.csv' 
+irg_df=df_from_s3(path,bucket_name)
+
 
 # %%
+# change time to datatime format and device as category format
 temp3_df.shape, swdw_df.shape, joined_df.shape,irg_df.shape
+# %%
 [temp3_df, swdw_df, joined_df, irg_df] = [df.apply(lambda x: pd.to_datetime(x) if x.name == 'time' else x) for df in [temp3_df, swdw_df, joined_df, irg_df]]
 [temp3_df, swdw_df, joined_df, irg_df] = [df.apply(lambda x: x.astype('category') if x.name == 'device' else x) for df in [temp3_df, swdw_df, joined_df, irg_df]]
 
 
 # %%
+# Join above dataframes into one
 merged_df = joined_df.merge(swdw_df, on=['time', 'device']).merge(temp3_df, on=['time', 'device'])
 merged_df = merged_df.merge(irg_df, on=['time', 'device'], how='left')
 
-
 # %%
 merged_df['duration_seconds'] = merged_df['duration_seconds'].fillna(0)
-
+# %%
+merged_df=merged_df.sort_values(['device', 'time'])
 # %%
 bucket_name = 'arable-adse-dev'
 path = f'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv' #ET{device}_mark_df_daily.csv
 df_to_s3( merged_df, path, bucket_name, format ='csv')
 
 # %% [markdown]
+
 # # Part 2: CWSI Feature Engineering and Model Prediction
 
 # %%
@@ -531,7 +547,7 @@ def preprocessing(df, a, b):
     df['UL_mod'] = (b - a) * abs(df['VPG'])  # ULmode
     df['UL'] = df['tbelow'] + 5  # Upper limit
     df['diff'] = df['tbelow'] - df['tair']
-    df['CWSI'] = (abs(df['diff'] - df['LL']) / (df['UL_mod'] - df['LL']))
+    df['CWSI'] = ((df['diff'] - df['LL']) / (df['UL'] - df['LL'])) #above VPG, UL_mode is questionable use UL instead
 
     window_size = 3 #moving averate of 3 hours
     #compute pseudo CWSI by computing slopes of diff/vpd
@@ -562,7 +578,8 @@ def get_solar_time(longitude, utc_time):
 
 def create_features(field_df):
 # Calculate the 'tbelow-tair' column by subtracting 'tair' from 'tbelow'
-    field_df['ref_tbelow-tair'] = field_df['ref_tbelow'] - field_df['tair']
+    if field_df['ref_tbelow']:
+        field_df['ref_tbelow-tair'] = field_df['ref_tbelow'] - field_df['tair']
     field_df['es'] = esat_(field_df['tair'])
     # field_df['tzconvert_time1'] = field_df['time'].dt.tz_convert('America/Los_Angeles')
     # field_df['fntrans_time'] = solar_noon_(field_df['time'], field_df['long'])
@@ -640,54 +657,6 @@ def Stress_Intensity(df):
     return df_daily
 
 # %%
-# Perform preprocessing steps on DataFrame, including calculating various columns based on existing columns
-def preprocessing(df, a, b):
-    df['LL'] = a + b * df['vpd']  # Define lower limit
-    df['VPG'] = (df['es'] * (a + df['tair'])) - df['es'] * df['tair']  # Compute VPG
-    df['UL_mod'] = (b - a) * abs(df['VPG'])  # ULmode
-    df['UL'] = df['tbelow'] + 5  # Upper limit
-    df['diff'] = df['tbelow'] - df['tair']
-    df['CWSI'] = (abs(df['diff'] - df['LL']) / (df['UL_mod'] - df['LL']))
-
-    window_size = 3 #moving averate of 3 hours
-    #compute pseudo CWSI by computing slopes of diff/vpd
-    df['diff_rolling_avg'] = df['diff'].rolling(window=window_size, min_periods=1).mean()
-    df['vpd_rolling_avg'] = df['vpd'].rolling(window=window_size, min_periods=1).mean()
-    df['pCWSI'] = df.apply(lambda x: x.diff_rolling_avg/x.vpd_rolling_avg, axis=1)
-
-    #calculate DACT and DANS
-    DACT_DANS(df, Tcritical)
-
-    df_daily=pd.DataFrame()
-    # calculate stress intensity
-    df_daily = Stress_Intensity(df)
-
-    return df, df_daily
-
-def get_solar_time(longitude, utc_time):
-    # Convert utc_time to pandas Timestamp object
-    utc_time = pd.to_datetime(utc_time)
-    # Calculate the hour offset based on the longitude
-    hour_offset = round(longitude / 15)
-    hour_offset = pd.to_timedelta(hour_offset, unit = 'h')
-    # Apply the offset to the UTC time to get the solar time
-    solar_time = utc_time + hour_offset
-
-    return solar_time
-
-
-def create_features(field_df):
-# Calculate the 'tbelow-tair' column by subtracting 'tair' from 'tbelow'
-    field_df['ref_tbelow-tair'] = field_df['ref_tbelow'] - field_df['tair']
-    field_df['es'] = esat_(field_df['tair'])
-    # field_df['tzconvert_time1'] = field_df['time'].dt.tz_convert('America/Los_Angeles')
-    # field_df['fntrans_time'] = solar_noon_(field_df['time'], field_df['long'])
-    field_df['solar_time'] = get_solar_time( field_df['long'], field_df['time'])
-    field_df['solarnoon'] = (field_df['solar_time'].dt.hour >= 12) & (field_df['solar_time'].dt.hour < 16)
-    field_df['solarnoon'] = field_df['solarnoon'].astype(int)
-    return field_df
-
-# %%
 # %%
 #dataframe is pulled using SQL query directly using: CWSI_Ref_Mark_Joined_data_ETL.py
 bucket_name = 'arable-adse-dev'
@@ -699,13 +668,15 @@ joined_df = df_from_s3(path, bucket_name, format='csv')
 # %%
 # change columns names to use following processing program
 field_df=joined_df.drop(['ref_time', 'body_temp'], axis=1)
-
+# %%
 # Create the 'tbelow-tair' and es
 create_features(field_df)
 # Drop rows with missing values
-field_df.dropna(inplace=True) 
+# field_df.dropna(inplace=True) 
 
 # %%
+
+
 # %%
 regline_list=[] # store regression parameters
 # export hourly dataframe for CWSI related calculation
@@ -714,23 +685,25 @@ res_df = pd.DataFrame()
 # create daily sum for DACT as a metric for stress hours and intensity for sites
 res_daily= pd.DataFrame()
 
-sites = field_df.site_id.unique().tolist()
+# sites = field_df.site_id.unique().tolist()
 
 #create CWSI
+coef, intercept=-1.29, 1.55 #from LL stage II, III
+
 for site in sites:
     #select time window to compute m1_coef_, m1_intercept_
     for source in ['L1','L2', 'H1', 'H2']:
-        solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-06-01') & (field_df.time< '2023-06-29')
+        # solarnoon_mask=(field_df.solarnoon==1) & (field_df.time> '2023-06-01') & (field_df.time< '2024-06-29') # not rely on regression
         # compute slope and interception for solarnoon on each device
-        x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[(field_df['site_id'] == site) \
-                                                                & (field_df['source'] == source) \
-                                                                & solarnoon_mask][['vpd', 'ref_tbelow-tair']])
+        # x, Y_pred, m1_coef_, m1_intercept_ = lr_vpd_tdif(field_df[(field_df['site_id'] == site) \
+        #                                                         & (field_df['source'] == source) \
+        #                                                         & solarnoon_mask][['vpd', 'ref_tbelow-tair']])
         plotmask=(field_df['site_id'] == site) & (field_df['source'] == source)
-        _, _df_daily = preprocessing(field_df[plotmask], m1_coef_[0][0], m1_intercept_[0])
+        _, _df_daily = preprocessing(field_df[plotmask], coef, intercept) # m1_coef_[0][0], m1_intercept_[0]
         res_df = pd.concat([res_df, _])
         res_daily = pd.concat([res_daily, _df_daily])
-        print(site, source, m1_coef_[0][0], m1_intercept_[0], res_df.shape, res_daily.shape)
-        regline_list.append([site, source, m1_coef_[0][0], m1_intercept_[0]])
+        print(site, source, coef, intercept, res_df.shape, res_daily.shape)
+        # regline_list.append([site, source, m1_coef_[0][0], m1_intercept_[0]])
 
 res_df = res_df.drop(['diff', 'diff_rolling_avg', 'vpd_rolling_avg'], axis=1)
 # regline_list
@@ -738,7 +711,8 @@ res_df = res_df.drop(['diff', 'diff_rolling_avg', 'vpd_rolling_avg'], axis=1)
 # %%
 #reset index so the time index will be treated as a column in quicksight
 res_df.reset_index(inplace=True)
-
+# %%
+res_df.device.value_counts()
 # %%
 # %%
 bucket_name = 'arable-adse-dev'
@@ -749,7 +723,7 @@ df_to_s3(res_daily, path, bucket_name, format='csv')
 
 # %%
 bucket_name = 'arable-adse-dev'
-path = 'Carbon Project/Stress Index/UCD_Almond/field_cwsi_trial.csv'
+path = 'Carbon Project/Stress Index/UCD_Almond/Joined_ref_df_hourly.csv'
 # Save res_df to S3 bucket
 df_to_s3(res_df, path, bucket_name, format='csv')
 
@@ -757,5 +731,46 @@ df_to_s3(res_df, path, bucket_name, format='csv')
 
 # %%
 
+res_df.to_csv('./data/cwsi_joined.csv')
+
+# %%
+res_df.device.value_counts()
+# res_df.loc[res_df.device=='D003960']
+# %%
+res_df1 = res_df.set_index('time')
+res_df1=res_df1[res_df1.site_id =='TWE_BV2']
+# %%
+import plotly.express as px
+sorted_df = res_df1.sort_index()
+
+fig = px.line(sorted_df, x=sorted_df.index, y='tbelow', color='device')
+fig.update_layout(width=20*100, height=6*100)  # Each unit is 100 pixels
+fig.show()
 
 
+# %%
+
+# %%
+import plotly.express as px
+
+joined_df1 = merged_df.set_index('time')
+sorted_df = joined_df1.sort_index()
+sorted_df = sorted_df[sorted_df.site_id == 'TWE_BV2']
+# %%
+# Remove empty categories
+filtered_df=sorted_df
+filtered_df['device'] = sorted_df['device'].cat.remove_unused_categories()
+
+fig = px.line(filtered_df, x=filtered_df.index, y='tbelow', color='device')
+fig.update_layout(width=20*100, height=6*100)  # Each unit is 100 pixels
+fig.show()
+
+# %%
+pd.set_option('display.max_columns', None)
+sorted_df.device.value_counts()
+
+# %%
+# sorted_df['device'].device
+# sorted_df.groupby('device').mean().dropna()
+sorted_df['device'] = sorted_df['device'].cat.remove_unused_categories()
+# %%
